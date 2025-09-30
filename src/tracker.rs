@@ -1,125 +1,115 @@
-// tracker.rs
+use reqwest::Client;
+use crate::bencode::{BValue, decode_bencode};
+use crate::utils::url_encode_bytes;
+use std::error::Error;
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize, Deserializer};
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4};
+/// Announces to the tracker's `announce` URL and returns a list of peers (IP+port).
+///
+/// * `announce`: The tracker URL.
+/// * `info_hash`: The info hash bytes.
+/// * `peer_id`: The 20-byte peer ID you’re using.
+/// * `uploaded`: Bytes uploaded so far.
+/// * `downloaded`: Bytes downloaded so far.
+/// * `left`: Bytes left to download.
+/// * `port`: Port number.
+///
+/// Returns a vector of (ip, port) pairs or an error.
+pub async fn announce(
+    client: &Client,
+    announce: &str,
+    info_hash: &[u8],
+    peer_id: &[u8; 20],
+    uploaded: u64,
+    downloaded: u64,
+    left: u64,
+    port: u16,
+) -> Result<Vec<(String, u16)>, Box<dyn Error + Send + Sync>> {
+    let info_hash_encoded = url_encode_bytes(info_hash);
+    let peer_id_encoded = url_encode_bytes(peer_id);
 
-// Flexible tracker response structure
-#[derive(Serialize, Deserialize, Debug)]
-pub struct TrackerResponse {
-    #[serde(default = "default_interval")]
-    pub interval: i32,
-    
-    #[serde(default)]
-    pub complete: Option<i32>,
-    
-    #[serde(default)]
-    pub incomplete: Option<i32>,
-    
-    #[serde(default)]
-    pub downloaded: Option<i32>,
-    
-    #[serde(default, deserialize_with = "deserialize_peers_flexible")]
-    pub peers: Vec<SocketAddrV4>,
-    
-    // Handle error responses
-    #[serde(default)]
-    pub failure_reason: Option<String>,
-    
-    #[serde(default)]
-    pub warning_message: Option<String>,
-}
+    let url = format!(
+        "{announce}?info_hash={info_hash}&peer_id={peer_id}&port={port}&uploaded={uploaded}&downloaded={downloaded}&left={left}&compact=1",
+        announce   = announce,
+        info_hash  = info_hash_encoded,
+        peer_id    = peer_id_encoded,
+        port       = port,
+        uploaded   = uploaded,
+        downloaded = downloaded,
+        left       = left
+    );
 
-fn default_interval() -> i32 {
-    1800 // 30 minutes default
-}
+    let response_bytes = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Tracker request failed: {e}"))?
+        .bytes()
+        .await
+        .map_err(|e| format!("Reading tracker response failed: {e}"))?
+        .to_vec();
 
-// Flexible peer deserialization that handles both compact and dictionary formats
-fn deserialize_peers_flexible<'de, D>(deserializer: D) -> Result<Vec<SocketAddrV4>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::{self, Visitor, SeqAccess};
-    use std::fmt;
-    
-    struct PeersVisitor;
-    
-    impl<'de> Visitor<'de> for PeersVisitor {
-        type Value = Vec<SocketAddrV4>;
-        
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("peers as bytes or list of dictionaries")
-        }
-        
-        // Handle compact format (binary peers)
-        fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            if v.len() % 6 != 0 {
-                return Ok(Vec::new()); // Return empty instead of error for resilience
-            }
-            
-            let mut peers = Vec::with_capacity(v.len() / 6);
-            for chunk in v.chunks_exact(6) {
-                let ip = Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]);
-                let port = u16::from_be_bytes([chunk[4], chunk[5]]);
-                peers.push(SocketAddrV4::new(ip, port));
-            }
-            Ok(peers)
-        }
-        
-        // Handle list format (array of peer dictionaries)
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: SeqAccess<'de>,
-        {
-            let mut peers = Vec::new();
-            
-            while let Some(peer_dict) = seq.next_element::<PeerDict>()? {
-                if let (Some(ip_str), Some(port)) = (peer_dict.ip, peer_dict.port) {
-                    // Try IPv4 first, then IPv6, then skip if neither works
-                    if let Ok(ipv4) = ip_str.parse::<Ipv4Addr>() {
-                        peers.push(SocketAddrV4::new(ipv4, port));
-                    } else if let Ok(_ipv6) = ip_str.parse::<Ipv6Addr>() {
-                        // For IPv6, we need to convert to IPv4 or skip since BitTorrent typically uses IPv4
-                        // For now, we'll skip IPv6 addresses but at least won't error
-                        continue;
-                    }
-                }
-            }
-            
-            Ok(peers)
+    let (_len, bvalue) = decode_bencode(&response_bytes)
+        .map_err(|e| format!("Tracker response bencode error: {e:?}"))?;
+
+    // Check if the tracker returned a failure reason.
+    if let BValue::Dict(ref dict) = bvalue {
+        if let Some(BValue::ByteString(reason)) = dict.get("failure reason") {
+            let failure_str = String::from_utf8_lossy(reason);
+            return Err(format!("Tracker failure: {failure_str}").into());
         }
     }
-    
-    deserializer.deserialize_any(PeersVisitor)
+
+    let peer_list = parse_peers_from_bvalue(&bvalue)?;
+    Ok(peer_list)
 }
 
-#[derive(Deserialize)]
-struct PeerDict {
-    ip: Option<String>,
-    port: Option<u16>,
-}
+/// Parses a `BValue` (which should be the top-level dictionary from the tracker response)
+/// to extract either a "compact" or "non-compact" list of peers.
+fn parse_peers_from_bvalue(bval: &BValue) -> Result<Vec<(String, u16)>, Box<dyn Error + Send + Sync>> {
+    let dict = match bval {
+        BValue::Dict(d) => d,
+        _ => return Err("Tracker response not a dictionary".into()),
+    };
 
-// Note: UDP tracker support could be added here in the future
+    // The "peers" key can be a ByteString (compact) or a List of Dicts (non-compact).
+    let peers_val = dict.get("peers")
+        .ok_or_else(|| "Missing 'peers' key in tracker response".to_string())?;
 
-// Simple UDP tracker handling - returns helpful message
-pub fn handle_udp_tracker(tracker_url: &str) -> Result<TrackerResponse> {
-    // For now, return a response that explains the situation
-    println!("\n🔧 UDP Tracker Detected: {tracker_url}");
-    println!("📡 UDP trackers are complex and many are offline.");
-    println!("💡 For testing, try creating a torrent with HTTP tracker.");
-    println!("🌐 Example: announce URLs starting with 'http://' or 'https://'");
-    
-    // Return empty response to avoid crashes
-    Ok(TrackerResponse {
-        interval: 1800,
-        complete: Some(0),
-        incomplete: Some(0),
-        downloaded: None,
-        peers: Vec::new(),
-        failure_reason: Some("UDP tracker detected - not implemented".to_string()),
-        warning_message: Some("Use HTTP/HTTPS tracker for testing".to_string()),
-    })
+    match peers_val {
+        // Compact mode: each peer is 6 bytes: [IP(4), Port(2)]
+        BValue::ByteString(bytes) => {
+            if bytes.len() % 6 != 0 {
+                return Err("Invalid compact peers length".into());
+            }
+
+            let mut result = Vec::new();
+            for chunk in bytes.chunks_exact(6) {
+                let ip = format!("{}.{}.{}.{}", chunk[0], chunk[1], chunk[2], chunk[3]);
+                let port = u16::from_be_bytes([chunk[4], chunk[5]]);
+                result.push((ip, port));
+            }
+            Ok(result)
+        }
+        // Non-compact: a List of dicts, each with "ip" and "port"
+        BValue::List(list) => {
+            let mut result = Vec::new();
+            for item in list {
+                if let BValue::Dict(peer_dict) = item {
+                    let ip = match peer_dict.get("ip") {
+                        Some(BValue::ByteString(ip_bytes)) => {
+                            String::from_utf8_lossy(ip_bytes).to_string()
+                        }
+                        _ => continue,
+                    };
+                    let port = match peer_dict.get("port") {
+                        Some(BValue::Integer(num)) => *num as u16,
+                        _ => continue,
+                    };
+                    result.push((ip, port));
+                }
+            }
+            Ok(result)
+        }
+        _ => Err("'peers' is neither ByteString nor List".into()),
+    }
 }
