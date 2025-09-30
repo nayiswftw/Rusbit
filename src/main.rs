@@ -29,6 +29,10 @@ struct Cli {
     /// Verbose logging
     #[arg(short, long)]
     verbose: bool,
+
+    /// Show progress bar
+    #[arg(short, long)]
+    progress: bool,
 }
 
 #[derive(Subcommand)]
@@ -114,6 +118,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     let log_level = if cli.verbose {
         log::LevelFilter::Debug
+    } else if cli.progress {
+        // Reduce logging when progress bar is active to avoid visual clutter
+        log::LevelFilter::Error
     } else {
         log::LevelFilter::Info
     };
@@ -164,7 +171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .enable_all()
                 .build()
                 .unwrap()
-                .block_on(download_piece_command(output, torrent_file, piece_index))
+                .block_on(download_piece_command(output, torrent_file, piece_index, cli.progress))
         }
         Commands::Download { output, torrent_file } => {
             validate_file_path(&torrent_file)?;
@@ -173,7 +180,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .enable_all()
                 .build()
                 .unwrap()
-                .block_on(download_command(output, torrent_file))
+                .block_on(download_command(output, torrent_file, cli.progress))
         }
         Commands::MagnetParse { magnet_link } => {
             validate_magnet_link(&magnet_link)?;
@@ -206,7 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .enable_all()
                 .build()
                 .unwrap()
-                .block_on(magnet_download_piece_command(output, magnet_link, piece_index))
+                .block_on(magnet_download_piece_command(output, magnet_link, piece_index, cli.progress))
         }
         Commands::MagnetDownload { output, magnet_link } => {
             validate_magnet_link(&magnet_link)?;
@@ -215,7 +222,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .enable_all()
                 .build()
                 .unwrap()
-                .block_on(magnet_download_command(output, magnet_link))
+                .block_on(magnet_download_command(output, magnet_link, cli.progress))
         }
     };
 

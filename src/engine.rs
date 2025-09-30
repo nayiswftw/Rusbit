@@ -13,6 +13,7 @@ use crate::peer::Peer;
 use crate::tracker;
 use crate::utils;
 use crate::piece_queue::PieceQueue;
+use rusbit_cli::progress::ProgressTracker;
 pub async fn decode_command(bencoded_string: String) -> Result<(), Box<dyn Error + Send + Sync>> {
     match decode_bencode(bencoded_string.as_bytes()) {
         Ok((_consumed, value)) => {
@@ -88,7 +89,7 @@ pub async fn handshake_command(torrent_file: String, peer_addr: String) -> Resul
     }
 }
 
-pub async fn download_piece_command(output: String, torrent_file: String, piece_index: u32) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub async fn download_piece_command(output: String, torrent_file: String, piece_index: u32, _show_progress: bool) -> Result<(), Box<dyn Error + Send + Sync>> {
     let http_client = Client::new();
     let peer_id = utils::generate_peer_id();
     let port = 6881;
@@ -126,7 +127,7 @@ pub async fn download_piece_command(output: String, torrent_file: String, piece_
             match setup_peer(&torrent_file, &addr).await {
                 Ok((mut peer, stream)) => {
                     if let Err(e) = peer
-                        .run_message_loop(stream, piece, &output, Arc::clone(&piece_queue), false, false)
+                        .run_message_loop(stream, piece, &output, Arc::clone(&piece_queue), false, false, None)
                         .await
                     {
                         error!("Error processing messages for {}: {}", addr, e);
@@ -140,7 +141,7 @@ pub async fn download_piece_command(output: String, torrent_file: String, piece_
     Ok(())
 }
 
-pub async fn download_command(output: String, torrent_file: String) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub async fn download_command(output: String, torrent_file: String, show_progress: bool) -> Result<(), Box<dyn Error + Send + Sync>> {
     let http_client = Client::new();
     let peer_id = utils::generate_peer_id();
 
@@ -161,12 +162,16 @@ pub async fn download_command(output: String, torrent_file: String) -> Result<()
     let pieces: Vec<u32> = (0..torrent.info.pieces.len()).map(|i| i as u32).collect();
     let piece_queue = Arc::new(PieceQueue::new(VecDeque::from(pieces)));
 
+    // Create progress tracker
+    let progress_tracker = Arc::new(ProgressTracker::with_progress_bar(torrent.info.pieces.len(), show_progress));
+
     let mut handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
     for (ip, port) in potential_peers {
         let addr = format!("{}:{}", ip, port);
         let torrent_path = torrent_file.clone();
         let output_path = output.clone();
         let pq = Arc::clone(&piece_queue);
+        let tracker = Arc::clone(&progress_tracker);
 
         let handle: tokio::task::JoinHandle<()> = tokio::spawn(async move {
             while let Some(piece) = pq.get_next_piece().await {
@@ -175,7 +180,7 @@ pub async fn download_command(output: String, torrent_file: String) -> Result<()
                 match setup_peer(&torrent_path, &addr).await {
                     Ok((mut peer, stream)) => {
                         if let Err(e) = peer
-                            .run_message_loop(stream, piece, &output_path, Arc::clone(&pq), true, false)
+                            .run_message_loop(stream, piece, &output_path, Arc::clone(&pq), true, false, Some(Arc::clone(&tracker)))
                             .await
                         {
                             error!("Error processing messages for {}: {}", addr, e);
@@ -190,6 +195,9 @@ pub async fn download_command(output: String, torrent_file: String) -> Result<()
     for handle in handles {
         handle.await?;
     }
+
+    // Finish progress tracking
+    progress_tracker.finish();
     Ok(())
 }
 
@@ -248,7 +256,8 @@ pub async fn magnet_handshake_command(magnet_link: String) -> Result<(), Box<dyn
         "test.rs",
         Arc::new(PieceQueue::new(VecDeque::new())),
         false, 
-        false          
+        false,
+        None
     ).await?;
 
     if let Some(remote_id) = meta_peer.remote_peer_id {
@@ -304,7 +313,8 @@ pub async fn magnet_info_command(magnet_link: String) -> Result<(), Box<dyn Erro
         "test.rs",
         Arc::new(PieceQueue::new(VecDeque::new())),
         false, 
-        true                   
+        true,
+        None
     ).await?;
 
     if let Some(remote_id) = meta_peer.remote_peer_id {
@@ -327,7 +337,7 @@ pub async fn magnet_info_command(magnet_link: String) -> Result<(), Box<dyn Erro
     Ok(())
 }
 
-pub async fn magnet_download_piece_command(output: String, magnet_link: String, piece_index: u32) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub async fn magnet_download_piece_command(output: String, magnet_link: String, piece_index: u32, _show_progress: bool) -> Result<(), Box<dyn Error + Send + Sync>> {
     // Parse magnet link.
     let magnet_map = decode_magnet(&magnet_link)?;
     let info_hash = magnet_map.get("info_hash").unwrap();
@@ -375,6 +385,7 @@ pub async fn magnet_download_piece_command(output: String, magnet_link: String, 
             Arc::new(PieceQueue::new(VecDeque::new())),
             false, 
             true,
+            None
         )
         .await?;
 
@@ -436,6 +447,7 @@ pub async fn magnet_download_piece_command(output: String, magnet_link: String, 
                                 Arc::clone(&piece_queue_clone),
                                 false,
                                 false,
+                                None
                             )
                             .await
                         {
@@ -459,7 +471,7 @@ pub async fn magnet_download_piece_command(output: String, magnet_link: String, 
     Ok(())
 }
 
-pub async fn magnet_download_command(output: String, magnet_link: String) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub async fn magnet_download_command(output: String, magnet_link: String, show_progress: bool) -> Result<(), Box<dyn Error + Send + Sync>> {
     // Parse magnet link.
     let magnet_map = decode_magnet(&magnet_link)?;
     let info_hash = magnet_map.get("info_hash").unwrap();
@@ -504,7 +516,8 @@ pub async fn magnet_download_command(output: String, magnet_link: String) -> Res
         "test.rs",
         Arc::new(PieceQueue::new(VecDeque::new())),
         false, 
-        true                   
+        true,
+        None
     ).await?;
 
     if let Some(remote_id) = meta_peer.remote_peer_id {
@@ -530,6 +543,9 @@ pub async fn magnet_download_command(output: String, magnet_link: String) -> Res
     let pieces: Vec<u32> = (0..num_pieces).map(|i| i as u32).collect();
     let full_piece_queue = Arc::new(PieceQueue::new(VecDeque::from(pieces)));
 
+    // Create progress tracker
+    let progress_tracker = Arc::new(ProgressTracker::with_progress_bar(num_pieces, show_progress));
+
     // Now spawn download tasks for each available peer.
     let mut handles = Vec::new();
     for (ip, port) in potential_peers {
@@ -540,6 +556,7 @@ pub async fn magnet_download_command(output: String, magnet_link: String) -> Res
         let info_hash_bytes_clone = info_hash_bytes;
         let addr_clone = addr.clone();
         let output_path_clone = output.clone();
+        let tracker = Arc::clone(&progress_tracker);
 
         let handle: tokio::task::JoinHandle<()> = tokio::spawn(async move {
             // For each piece, create a new connection.
@@ -567,6 +584,7 @@ pub async fn magnet_download_command(output: String, magnet_link: String) -> Res
                                 Arc::clone(&piece_queue_clone),
                                 true,
                                 false,
+                                Some(Arc::clone(&tracker))
                             )
                             .await
                         {
@@ -587,6 +605,9 @@ pub async fn magnet_download_command(output: String, magnet_link: String) -> Res
     for handle in handles {
         handle.await?;
     }
+
+    // Finish progress tracking
+    progress_tracker.finish();
     Ok(())
 }/// Sets up a peer connection given a torrent file and a peer address.
 async fn setup_peer(file_path: &str, addr: &str) -> Result<(Peer, TcpStream), Box<dyn Error + Send + Sync>> {
