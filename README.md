@@ -108,51 +108,51 @@ rusbit-cli handshake <torrent-file> <peer-address>
 
 #### Download Single Piece
 ```bash
-rusbit-cli download_piece -o <output-file> <torrent-file> <piece-index>
+rusbit-cli download-piece <output-file> <torrent-file> <piece-index>
 ```
 
 #### Download Complete File
 ```bash
-rusbit-cli download -o <output-file> <torrent-file>
+rusbit-cli download <output-file> <torrent-file>
 ```
 
 ### Magnet Link Commands
 
 #### Parse Magnet Link
 ```bash
-rusbit-cli magnet_parse "<magnet-link>"
+rusbit-cli magnet-parse "<magnet-link>"
 ```
 
 #### Magnet Handshake
 ```bash
-rusbit-cli magnet_handshake "<magnet-link>"
+rusbit-cli magnet-handshake "<magnet-link>"
 ```
 
 #### Get Magnet Info
 ```bash
-rusbit-cli magnet_info "<magnet-link>"
+rusbit-cli magnet-info "<magnet-link>"
 ```
 
 #### Download Piece via Magnet
 ```bash
-rusbit-cli magnet_download_piece -o <output-file> "<magnet-link>" <piece-index>
+rusbit-cli magnet-download-piece <output-file> "<magnet-link>" <piece-index>
 ```
 
 #### Download Complete File via Magnet
 ```bash
-rusbit-cli magnet_download -o <output-file> "<magnet-link>"
+rusbit-cli magnet-download <output-file> "<magnet-link>"
 ```
 
 ## Examples 💡
 
 ### Download a Torrent File
 ```bash
-rusbit-cli download -o myfile.txt sample.torrent
+rusbit-cli download myfile.txt sample.torrent
 ```
 
 ### Download via Magnet Link
 ```bash
-rusbit-cli magnet_download -o myfile.txt "magnet:?xt=urn:btih:...&dn=MyFile&tr=..."
+rusbit-cli magnet-download myfile.txt "magnet:?xt=urn:btih:...&dn=MyFile&tr=..."
 ```
 
 ### Get Torrent Information
@@ -163,13 +163,15 @@ rusbit-cli info sample.torrent
 Output:
 ```
 Tracker URL: http://example.com/announce
-Length: 123456
+File Name: sample.txt
+File Length: 123456 bytes
+Piece Length: 16384 bytes
 Info Hash: abc123...
-Piece Length: 16384
 Piece Hashes:
-abc123...
-def456...
-...
+  Piece 0: abc123...
+  Piece 1: def456...
+  ...
+Total Pieces: 8
 ```
 
 
