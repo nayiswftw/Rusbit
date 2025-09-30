@@ -82,7 +82,21 @@ cargo build --release
 
 The binary will be available at `target/release/rusbit-cli`.
 
+### Configuration
+
+On first run, Rusbit will create a `rusbit.toml` configuration file with default settings. You can modify this file to customize:
+
+- Peer ID prefix
+- Listen port
+- Maximum connections
+- Timeouts
+- Download directory
+
 ## Usage 📖
+
+### Global Options
+
+- `-v, --verbose`: Enable verbose logging
 
 ### Basic Commands
 
@@ -147,17 +161,22 @@ rusbit-cli magnet-download <output-file> "<magnet-link>"
 
 ### Download a Torrent File
 ```bash
-rusbit-cli download myfile.txt sample.torrent
+rusbit-cli download -o myfile.txt sample.torrent
 ```
 
 ### Download via Magnet Link
 ```bash
-rusbit-cli magnet-download myfile.txt "magnet:?xt=urn:btih:...&dn=MyFile&tr=..."
+rusbit-cli magnet-download -o myfile.txt "magnet:?xt=urn:btih:...&dn=MyFile&tr=..."
 ```
 
 ### Get Torrent Information
 ```bash
 rusbit-cli info sample.torrent
+```
+
+### Verbose Logging
+```bash
+rusbit-cli --verbose download -o myfile.txt sample.torrent
 ```
 
 Output:
