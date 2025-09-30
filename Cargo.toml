@@ -19,6 +19,16 @@ serde_urlencoded = "0.7.1"                                         # for url enc
 sha1 = "0.10.1"                                                    # hashing
 tempfile = "3"                                                     # creating temporary directories
 thiserror = "1.0.38"                                               # error handling
-tokio = { version = "1.23.0", features = ["full"] }                # async http requests
+tokio = { version = "1.23.0", features = ["full", "signal"] }                # async http requests
 rand = "0.8"
 log = { version = "0.4.25", features = ["std", "serde"] }
+env_logger = "0.10"
+toml = "0.8"
+indicatif = "0.17"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

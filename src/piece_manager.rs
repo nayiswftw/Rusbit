@@ -4,6 +4,7 @@ use sha1::{Sha1, Digest};
 use std::io::{Error, ErrorKind};
 use tokio::net::TcpStream;
 use std::sync::Arc;
+use log::debug;
 
 use crate::torrent::TorrentInfo;
 use crate::file_io::write_piece_to_file_at_offset;
@@ -98,7 +99,7 @@ impl PieceManager {
         };
 
         let current_size = self.received_blocks.get(&piece_index).unwrap().len() as u32;
-        println!(
+        debug!(
             "Received block: piece={}, offset={}, block_length={}, current_size={}/{}",
             piece_index,
             offset,

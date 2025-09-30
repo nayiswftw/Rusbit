@@ -13,6 +13,7 @@ use crate::piece_manager::PieceManager;
 use crate::piece_queue::PieceQueue;
 use crate::bencode::{bvalue_to_json, encode_bvalue, decode_bencode, BValue};
 use crate::torrent::{get_integer, calculate_info_hash_from_struct};
+use rusbit_cli::progress::ProgressTracker;
 
 /// The Peer structure now only holds connection and protocol state,
 /// and it delegates piece-related work to the PieceManager.
@@ -90,6 +91,7 @@ impl Peer {
         in_progress: Arc<PieceQueue>,
         full_file: bool,
 		send_extension: bool,
+        progress_tracker: Option<Arc<ProgressTracker>>,
 	    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         loop {
             let message = read_message(&mut stream).await?;
@@ -131,6 +133,9 @@ impl Peer {
                                 "Piece {} completely downloaded and written.",
                                 piece_index
                             );
+                            if let Some(tracker) = &progress_tracker {
+                                tracker.increment();
+                            }
                             break;
                         }
                     } else {
